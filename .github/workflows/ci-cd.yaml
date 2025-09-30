@@ -26,14 +26,24 @@ jobs:
 
       - id: test
         if: steps.build.outcome == 'success'
-        name: Test
-        run: dotnet test "BuildWebApp.Tests/BuildWebApp.Tests.csproj" --collect "XPlat Code Coverage" -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura
+        name: Test with Coverage
+        run: dotnet test "BuildWebApp.Tests/BuildWebApp.Tests.csproj" \
+               --collect:"XPlat Code Coverage" \
+               --results-directory TestResults \
+               -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura
+
+      - name: Debug TestResults
+        run: |
+          echo "Listing TestResults directory:"
+          ls -R TestResults || echo "No TestResults directory found"
+          echo "Searching for cobertura files:"
+          find . -name "*.cobertura.xml" || echo "No cobertura files found"
 
       - id: coverage
         name: Code Coverage Report
         uses: irongut/CodeCoverageSummary@v1.3.0
         with:
-          filename: BuildWebApp.Tests/TestResults/**/*.cobertura.xml
+          filename: TestResults/**/coverage.cobertura.xml
           badge: false
           fail_below_min: false
           hide_branch_rate: false
