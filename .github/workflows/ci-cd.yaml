@@ -1,78 +1,45 @@
-name: Build Web App
+name: Build and Deploy Self-Hosted
 
 on:
-  workflow_dispatch:
   push:
-    branches: ['main']
+    branches:
+      - main
 
 jobs:
-  build:
+  build-deploy:
     runs-on: self-hosted
-    defaults:
-      run:
-        shell: pwsh
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source
+        uses: actions/checkout@v4
 
-      - name: Set up .NET
+      - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-        
+
       - name: Restore dependencies
         run: dotnet restore
 
-      - id: build
-        name: Build
-        run: dotnet build --no-restore
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
 
-      - id: test
-        if: steps.build.outcome == 'success'
-        name: Test with Coverage
-        run: dotnet test "BuildWebApp.Tests/BuildWebApp.Tests.csproj" --collect:"XPlat Code Coverage" --results-directory TestResults -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura
+      - name: Run tests with coverage
+        run: dotnet test BuildWebApp.Tests/BuildWebApp.Tests.csproj --collect:"XPlat Code Coverage" --results-directory TestResults -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura
 
-      - name: Debug TestResults
+      - name: Publish app
+        run: dotnet publish BuildWebApp/BuildWebApp.csproj -c Release -o ./publish
+
+      - name: Deploy locally
         run: |
-          Write-Host "Listing TestResults directory:"
-          Get-ChildItem -Recurse TestResults | ForEach-Object { $_.FullName }
-          Write-Host "Searching for cobertura files:"
-          Get-ChildItem -Recurse -Filter *.cobertura.xml | ForEach-Object { $_.FullName }
-
-      - id: coverage
-        name: Code Coverage Report
-        uses: irongut/CodeCoverageSummary@v1.3.0
-        with:
-          filename: TestResults/**/coverage.cobertura.xml
-          badge: false
-          fail_below_min: false
-          hide_branch_rate: false
-          hide_complexity: true
-          indicators: true
-          output: console
-
-      - id: publish
-        name: Publish
-        run: dotnet publish "BuildWebApp/BuildWebApp.csproj" -c Release -o published --self-contained -r win-x64 /p:UseAppHost=true
-
-      - name: Deploy Locally (Self-Host)
-        run: |
-          Write-Host "Stopping any running BuildWebApp process..."
-          Get-Process BuildWebApp -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-
-          $DEPLOY_DIR = "$env:USERPROFILE\BuildWebApp_deploy"
-          if (-Not (Test-Path $DEPLOY_DIR)) {
-            New-Item -ItemType Directory -Path $DEPLOY_DIR | Out-Null
+          $deployPath = "C:\inetpub\wwwroot\BuildWebApp"
+          if (Test-Path $deployPath) {
+            Remove-Item $deployPath -Recurse -Force
           }
+          New-Item -ItemType Directory -Path $deployPath | Out-Null
+          Copy-Item -Path ./publish/* -Destination $deployPath -Recurse -Force
+          Write-Host "App deployed to $deployPath"
 
-          Write-Host "Copying published files to $DEPLOY_DIR..."
-          Copy-Item -Path published\* -Destination $DEPLOY_DIR -Recurse -Force
-
-          Write-Host "Starting BuildWebApp on http://localhost:5000..."
-          Start-Process -FilePath "$DEPLOY_DIR\BuildWebApp.exe" `
-            -ArgumentList "--urls","http://localhost:5000" `
-            -RedirectStandardOutput "$DEPLOY_DIR\app.log" `
-            -RedirectStandardError "$DEPLOY_DIR\app-error.log" `
-            -NoNewWindow
-
-          Write-Host "Deployment complete. Logs at $DEPLOY_DIR\app.log"
+      - name: Run application
+        run: |
+          Start-Process "C:\inetpub\wwwroot\BuildWebApp\BuildWebApp.exe"
