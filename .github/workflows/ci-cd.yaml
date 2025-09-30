@@ -1,34 +1,84 @@
-name: Build and Run on Self-Hosted Runner
+name: Build Web App
 
 on:
+  workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: ['main']
 
 jobs:
   build:
     runs-on: self-hosted
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # Install .NET into a user-writable folder (C:\dotnet)
-      # - name: Set up .NET
-      #   uses: actions/setup-dotnet@v4
-      #   with:
-      #     dotnet-version: '8.0.x'
-      #     install-dir: C:\dotnet
-
-      # Add .NET install dir to PATH
-      - name: Add .NET to PATH
-        run: echo "C:\dotnet" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+        
       - name: Restore dependencies
         run: dotnet restore
 
-      - name: Build the app
-        run: dotnet build --configuration Release --no-restore
+      - id: build
+        name: Build
+        run: dotnet build --no-restore
 
-      - name: Run the app
-        run: dotnet run --configuration Release --project ./YourProjectName/YourProjectName.csproj
+      - id: test
+        if: steps.build.outcome == 'success'
+        name: Test with Coverage
+        run: dotnet test "BuildWebApp.Tests/BuildWebApp.Tests.csproj" --collect:"XPlat Code Coverage" --results-directory TestResults -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura
+
+      - name: Debug TestResults
+        run: |
+          echo "Listing TestResults directory:"
+          ls -R TestResults || echo "No TestResults directory found"
+          echo "Searching for cobertura files:"
+          find . -name "*.cobertura.xml" || echo "No cobertura files found"
+
+      - id: coverage
+        name: Code Coverage Report
+        uses: irongut/CodeCoverageSummary@v1.3.0
+        with:
+          filename: TestResults/**/coverage.cobertura.xml
+          badge: false
+          fail_below_min: false
+          hide_branch_rate: false
+          hide_complexity: true
+          indicators: true
+          output: console
+
+      - id: publish
+        name: Publish
+        run: dotnet publish "BuildWebApp/BuildWebApp.csproj" -c Release -o published --self-contained -r linux-x64 /p:UseAppHost=true
+
+      - name: Zip Artifact
+        run: zip -r app.zip published
+
+      - id: upload
+        name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dotnet-webapp
+          path: app.zip
+
+      - id: deploy
+        name: Deploy & Run Locally (Self-Host)
+        run: |
+          # Stop any existing instance
+          echo "Stopping any running BuildWebApp process..."
+          pkill -f "BuildWebApp" || true
+
+          # Deployment folder
+          DEPLOY_DIR="$HOME/BuildWebApp_deploy"
+          mkdir -p $DEPLOY_DIR
+
+          # Copy published files
+          echo "Copying published files to $DEPLOY_DIR..."
+          cp -r published/* $DEPLOY_DIR/
+
+          # Start the app in background on localhost:5000
+          echo "Starting BuildWebApp locally..."
+          nohup dotnet $DEPLOY_DIR/BuildWebApp.dll --urls http://localhost:5000 > $DEPLOY_DIR/app.log 2>&1 &
+
+          echo "Deployment complete. App running at http://localhost:5000"
