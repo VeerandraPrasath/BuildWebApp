@@ -48,13 +48,13 @@ jobs:
           hide_complexity: true
           indicators: true
           output: console
-      
+
       - id: publish
         name: Publish
         run: dotnet publish "BuildWebApp/BuildWebApp.csproj" -c Release -o published --self-contained -r linux-x64 /p:UseAppHost=true
 
       - name: Zip Artifact
-        run: zip app.zip ./publish
+        run: zip -r app.zip published
 
       - id: upload
         name: Upload Artifact
@@ -62,3 +62,18 @@ jobs:
         with:
           name: dotnet-webapp
           path: app.zip
+
+      
+      # - id: publish
+      #   name: Publish
+      #   run: dotnet publish "BuildWebApp/BuildWebApp.csproj" -c Release -o published --self-contained -r linux-x64 /p:UseAppHost=true
+
+      # - name: Zip Artifact
+      #   run: zip app.zip ./publish
+
+      # - id: upload
+      #   name: Upload Artifact
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: dotnet-webapp
+      #     path: app.zip
