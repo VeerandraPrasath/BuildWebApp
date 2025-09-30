@@ -63,6 +63,28 @@ jobs:
           name: dotnet-webapp
           path: app.zip
 
+
+      - id: deploy
+        name: Deploy Locally (Self-Host)
+        run: |
+          # Stop any running instance of the app
+          echo "Stopping existing BuildWebApp process (if any)..."
+          pkill -f "BuildWebApp" || true
+
+          # Ensure deployment folder exists
+          DEPLOY_DIR="$HOME/BuildWebApp_deploy"
+          mkdir -p $DEPLOY_DIR
+
+          # Copy published files to deploy folder
+          echo "Copying published files to $DEPLOY_DIR..."
+          cp -r published/* $DEPLOY_DIR/
+
+          # Start the app in background
+          echo "Starting BuildWebApp..."
+          nohup $DEPLOY_DIR/BuildWebApp > $DEPLOY_DIR/app.log 2>&1 &
+
+          echo "Deployment complete. App running in background."
+
       
       # - id: publish
       #   name: Publish
