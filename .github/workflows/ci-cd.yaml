@@ -8,6 +8,9 @@ on:
 jobs:
   build:
     runs-on: self-hosted
+    defaults:
+      run:
+        shell: pwsh
 
     steps:
       - uses: actions/checkout@v4
@@ -29,13 +32,12 @@ jobs:
         name: Test with Coverage
         run: dotnet test "BuildWebApp.Tests/BuildWebApp.Tests.csproj" --collect:"XPlat Code Coverage" --results-directory TestResults -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura
 
-
       - name: Debug TestResults
         run: |
-          echo "Listing TestResults directory:"
-          ls -R TestResults || echo "No TestResults directory found"
-          echo "Searching for cobertura files:"
-          find . -name "*.cobertura.xml" || echo "No cobertura files found"
+          Write-Host "Listing TestResults directory:"
+          Get-ChildItem -Recurse TestResults | ForEach-Object { $_.FullName }
+          Write-Host "Searching for cobertura files:"
+          Get-ChildItem -Recurse -Filter *.cobertura.xml | ForEach-Object { $_.FullName }
 
       - id: coverage
         name: Code Coverage Report
@@ -51,53 +53,26 @@ jobs:
 
       - id: publish
         name: Publish
-        run: dotnet publish "BuildWebApp/BuildWebApp.csproj" -c Release -o published --self-contained -r linux-x64 /p:UseAppHost=true
+        run: dotnet publish "BuildWebApp/BuildWebApp.csproj" -c Release -o published --self-contained -r win-x64 /p:UseAppHost=true
 
-      - name: Zip Artifact
-        run: zip -r app.zip published
-
-      - id: upload
-        name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: dotnet-webapp
-          path: app.zip
-
-
-   
-      - id: deploy
-        name: Deploy Locally (Self-Host)
+      - name: Deploy Locally (Self-Host)
         run: |
-          # Stop any running instance
-          echo "Stopping existing BuildWebApp process..."
-          pkill -f "BuildWebApp" || true
+          Write-Host "Stopping any running BuildWebApp process..."
+          Get-Process BuildWebApp -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
-          # Deployment folder
-          DEPLOY_DIR="$HOME/BuildWebApp_deploy"
-          mkdir -p $DEPLOY_DIR
+          $DEPLOY_DIR = "$env:USERPROFILE\BuildWebApp_deploy"
+          if (-Not (Test-Path $DEPLOY_DIR)) {
+            New-Item -ItemType Directory -Path $DEPLOY_DIR | Out-Null
+          }
 
-          # Copy published files
-          echo "Copying published files..."
-          cp -r published/* $DEPLOY_DIR/
+          Write-Host "Copying published files to $DEPLOY_DIR..."
+          Copy-Item -Path published\* -Destination $DEPLOY_DIR -Recurse -Force
 
-          # Start the app listening on port 5000
-          echo "Starting BuildWebApp on port 5000..."
-          nohup $DEPLOY_DIR/BuildWebApp --urls "http://0.0.0.0:5000" > $DEPLOY_DIR/app.log 2>&1 &
+          Write-Host "Starting BuildWebApp on http://localhost:5000..."
+          Start-Process -FilePath "$DEPLOY_DIR\BuildWebApp.exe" `
+            -ArgumentList "--urls","http://localhost:5000" `
+            -RedirectStandardOutput "$DEPLOY_DIR\app.log" `
+            -RedirectStandardError "$DEPLOY_DIR\app-error.log" `
+            -NoNewWindow
 
-          echo "Deployment complete. Access your app at http://localhost:5000"
-
-
-      
-      # - id: publish
-      #   name: Publish
-      #   run: dotnet publish "BuildWebApp/BuildWebApp.csproj" -c Release -o published --self-contained -r linux-x64 /p:UseAppHost=true
-
-      # - name: Zip Artifact
-      #   run: zip app.zip ./publish
-
-      # - id: upload
-      #   name: Upload Artifact
-      #   uses: actions/upload-artifact@v4
-      #   with:
-      #     name: dotnet-webapp
-      #     path: app.zip
+          Write-Host "Deployment complete. Logs at $DEPLOY_DIR\app.log"
