@@ -10,15 +10,8 @@ jobs:
     runs-on: self-hosted
 
     steps:
-      # - name: Checkout source
-      #   uses: actions/checkout@v4
-      #   with:
-      #     clean: false
-
-      - name: Prepare source
-        run: |
-          echo "Using local repo source (no checkout needed)"
-
+      - name: Checkout source
+        uses: actions/checkout@v4
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
