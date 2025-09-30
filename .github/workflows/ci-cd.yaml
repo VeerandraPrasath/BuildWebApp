@@ -27,10 +27,8 @@ jobs:
       - id: test
         if: steps.build.outcome == 'success'
         name: Test with Coverage
-        run: dotnet test "BuildWebApp.Tests/BuildWebApp.Tests.csproj" \
-               --collect:"XPlat Code Coverage" \
-               --results-directory TestResults \
-               -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura
+        run: dotnet test "BuildWebApp.Tests/BuildWebApp.Tests.csproj" --collect:"XPlat Code Coverage" --results-directory TestResults -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura
+
 
       - name: Debug TestResults
         run: |
