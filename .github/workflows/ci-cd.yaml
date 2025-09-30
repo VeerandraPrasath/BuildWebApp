@@ -14,11 +14,11 @@ jobs:
         uses: actions/checkout@v4
 
       # Install .NET into a user-writable folder (C:\dotnet)
-      - name: Set up .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.0.x'
-          install-dir: C:\dotnet
+      # - name: Set up .NET
+      #   uses: actions/setup-dotnet@v4
+      #   with:
+      #     dotnet-version: '8.0.x'
+      #     install-dir: C:\dotnet
 
       # Add .NET install dir to PATH
       - name: Add .NET to PATH
