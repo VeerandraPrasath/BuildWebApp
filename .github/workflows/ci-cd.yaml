@@ -63,23 +63,21 @@ jobs:
       - id: deploy
         name: Deploy & Run Locally (Self-Host)
         run: |
-          $deployDir = "$env:USERPROFILE\BuildWebApp_deploy"
-
           # Stop any running instance
-          $processes = Get-Process -Name BuildWebApp -ErrorAction SilentlyContinue
-          if ($processes) {
-            Write-Host "Stopping running BuildWebApp process..."
-            $processes | Stop-Process -Force
-          }
-
-          # Ensure deployment folder exists
+          Write-Host "Stopping any running BuildWebApp process..."
+          Get-Process BuildWebApp -ErrorAction SilentlyContinue | Stop-Process -Force
+      
+          # Deployment folder
+          $deployDir = "$env:USERPROFILE\BuildWebApp_deploy"
           if (!(Test-Path $deployDir)) { New-Item -ItemType Directory -Path $deployDir }
-
+      
           # Copy published files
-          Copy-Item -Path "published\*" -Destination $deployDir -Recurse -Force
-
-          # Start the app in background
+          Write-Host "Copying published files to $deployDir..."
+          Copy-Item -Path ".\published\*" -Destination $deployDir -Recurse -Force
+      
+          # Run the app
+          $dllPath = Join-Path $deployDir "BuildWebApp.dll"
           Write-Host "Starting BuildWebApp locally..."
-          Start-Process -FilePath "dotnet" -ArgumentList "$deployDir\BuildWebApp.dll --urls http://localhost:5000" -NoNewWindow
-
-          Write-Host "Deployment complete. App running at http://localhost:5000"
+          Start-Process "dotnet" -ArgumentList "`"$dllPath`" --urls http://localhost:5000" -NoNewWindow -PassThru
+      
+          Write-Host "Deployment complete. App should be running at http://localhost:5000"
