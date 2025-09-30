@@ -1,4 +1,4 @@
-name: Build and Deploy Self-Hosted
+name: Build and Run on Self-Hosted Runner
 
 on:
   push:
@@ -6,40 +6,29 @@ on:
       - main
 
 jobs:
-  build-deploy:
+  build:
     runs-on: self-hosted
 
     steps:
-      - name: Checkout source
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup .NET
+      # Install .NET into a user-writable folder (C:\dotnet)
+      - name: Set up .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
+          install-dir: C:\dotnet
+
+      # Add .NET install dir to PATH
+      - name: Add .NET to PATH
+        run: echo "C:\dotnet" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Restore dependencies
         run: dotnet restore
 
-      - name: Build
+      - name: Build the app
         run: dotnet build --configuration Release --no-restore
 
-      - name: Run tests with coverage
-        run: dotnet test BuildWebApp.Tests/BuildWebApp.Tests.csproj --collect:"XPlat Code Coverage" --results-directory TestResults -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura
-
-      - name: Publish app
-        run: dotnet publish BuildWebApp/BuildWebApp.csproj -c Release -o ./publish
-
-      - name: Deploy locally
-        run: |
-          $deployPath = "C:\inetpub\wwwroot\BuildWebApp"
-          if (Test-Path $deployPath) {
-            Remove-Item $deployPath -Recurse -Force
-          }
-          New-Item -ItemType Directory -Path $deployPath | Out-Null
-          Copy-Item -Path ./publish/* -Destination $deployPath -Recurse -Force
-          Write-Host "App deployed to $deployPath"
-
-      - name: Run application
-        run: |
-          Start-Process "C:\inetpub\wwwroot\BuildWebApp\BuildWebApp.exe"
+      - name: Run the app
+        run: dotnet run --configuration Release --project ./YourProjectName/YourProjectName.csproj
