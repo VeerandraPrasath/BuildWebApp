@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     steps:
       - uses: actions/checkout@v4
@@ -64,26 +64,28 @@ jobs:
           path: app.zip
 
 
+   
       - id: deploy
         name: Deploy Locally (Self-Host)
         run: |
-          # Stop any running instance of the app
-          echo "Stopping existing BuildWebApp process (if any)..."
+          # Stop any running instance
+          echo "Stopping existing BuildWebApp process..."
           pkill -f "BuildWebApp" || true
 
-          # Ensure deployment folder exists
+          # Deployment folder
           DEPLOY_DIR="$HOME/BuildWebApp_deploy"
           mkdir -p $DEPLOY_DIR
 
-          # Copy published files to deploy folder
-          echo "Copying published files to $DEPLOY_DIR..."
+          # Copy published files
+          echo "Copying published files..."
           cp -r published/* $DEPLOY_DIR/
 
-          # Start the app in background
-          echo "Starting BuildWebApp..."
-          nohup $DEPLOY_DIR/BuildWebApp > $DEPLOY_DIR/app.log 2>&1 &
+          # Start the app listening on port 5000
+          echo "Starting BuildWebApp on port 5000..."
+          nohup $DEPLOY_DIR/BuildWebApp --urls "http://0.0.0.0:5000" > $DEPLOY_DIR/app.log 2>&1 &
 
-          echo "Deployment complete. App running in background."
+          echo "Deployment complete. Access your app at http://localhost:5000"
+
 
       
       # - id: publish
