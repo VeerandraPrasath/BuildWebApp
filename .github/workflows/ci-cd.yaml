@@ -12,11 +12,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # - name: Set up .NET
-      #   uses: actions/setup-dotnet@v4
-      #   with:
-      #     dotnet-version: '8.0.x'
-        
       - name: Restore dependencies
         run: dotnet restore
 
@@ -31,10 +26,10 @@ jobs:
 
       - name: Debug TestResults
         run: |
-          echo "Listing TestResults directory:"
-          ls -R TestResults || echo "No TestResults directory found"
-          echo "Searching for cobertura files:"
-          find . -name "*.cobertura.xml" || echo "No cobertura files found"
+          Write-Host "Listing TestResults directory:"
+          Get-ChildItem -Recurse TestResults -ErrorAction SilentlyContinue
+          Write-Host "Searching for cobertura files:"
+          Get-ChildItem -Recurse -Filter *.cobertura.xml
 
       - id: coverage
         name: Code Coverage Report
@@ -50,10 +45,10 @@ jobs:
 
       - id: publish
         name: Publish
-        run: dotnet publish "BuildWebApp/BuildWebApp.csproj" -c Release -o published --self-contained -r linux-x64 /p:UseAppHost=true
+        run: dotnet publish "BuildWebApp/BuildWebApp.csproj" -c Release -o published --self-contained -r win-x64 /p:UseAppHost=true
 
       - name: Zip Artifact
-        run: zip -r app.zip published
+        run: Compress-Archive -Path published\* -DestinationPath app.zip
 
       - id: upload
         name: Upload Artifact
@@ -65,20 +60,23 @@ jobs:
       - id: deploy
         name: Deploy & Run Locally (Self-Host)
         run: |
-          # Stop any existing instance
-          echo "Stopping any running BuildWebApp process..."
-          pkill -f "BuildWebApp" || true
+          $deployDir = "$env:USERPROFILE\BuildWebApp_deploy"
 
-          # Deployment folder
-          DEPLOY_DIR="$HOME/BuildWebApp_deploy"
-          mkdir -p $DEPLOY_DIR
+          # Stop any running instance
+          $processes = Get-Process -Name BuildWebApp -ErrorAction SilentlyContinue
+          if ($processes) {
+            Write-Host "Stopping running BuildWebApp process..."
+            $processes | Stop-Process -Force
+          }
+
+          # Ensure deployment folder exists
+          if (!(Test-Path $deployDir)) { New-Item -ItemType Directory -Path $deployDir }
 
           # Copy published files
-          echo "Copying published files to $DEPLOY_DIR..."
-          cp -r published/* $DEPLOY_DIR/
+          Copy-Item -Path "published\*" -Destination $deployDir -Recurse -Force
 
-          # Start the app in background on localhost:5000
-          echo "Starting BuildWebApp locally..."
-          nohup dotnet $DEPLOY_DIR/BuildWebApp.dll --urls http://localhost:5000 > $DEPLOY_DIR/app.log 2>&1 &
+          # Start the app in background
+          Write-Host "Starting BuildWebApp locally..."
+          Start-Process -FilePath "dotnet" -ArgumentList "$deployDir\BuildWebApp.dll --urls http://localhost:5000" -NoNewWindow
 
-          echo "Deployment complete. App running at http://localhost:5000"
+          Write-Host "Deployment complete. App running at http://localhost:5000"
