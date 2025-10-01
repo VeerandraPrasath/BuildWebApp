@@ -62,109 +62,70 @@ jobs:
           path: app.zip
 
       - id: deploy
-        name: Deploy using nssm (Fixed Download)
+        name: Deploy using nssm with dotnet CLI
         run: |
           $serviceName = "BuildWebApp"
           $deployDir = "$env:USERPROFILE\BuildWebApp_deploy"
           
-          # Download nssm with proper error handling
+          # Download nssm
           $nssmDir = "$env:TEMP\nssm"
           $nssmExe = "$nssmDir\nssm.exe"
           
           if (!(Test-Path $nssmExe)) {
               Write-Host "Downloading nssm..."
-              
-              # Create temp directory
               if (Test-Path $nssmDir) {
                   Remove-Item $nssmDir -Recurse -Force -ErrorAction SilentlyContinue
               }
               New-Item -ItemType Directory -Path $nssmDir -Force
               
-              # Download nssm from reliable source
               $nssmUrl = "https://nssm.cc/release/nssm-2.24.zip"
               $nssmZip = "$env:TEMP\nssm.zip"
               
-              try {
-                  # Download with progress
-                  Invoke-WebRequest -Uri $nssmUrl -OutFile $nssmZip -UserAgent "PowerShell"
-                  Write-Host "Download completed successfully"
-                  
-                  # Extract nssm
-                  Expand-Archive -Path $nssmZip -DestinationPath $nssmDir -Force
-                  Write-Host "Extraction completed"
-                  
-                  # Find nssm.exe in the extracted files
+              Invoke-WebRequest -Uri $nssmUrl -OutFile $nssmZip
+              Expand-Archive -Path $nssmZip -DestinationPath $nssmDir -Force
+              
+              # Find nssm.exe in win64 folder (64-bit version)
+              $nssmExe = Get-ChildItem -Path $nssmDir -Recurse -Filter "nssm.exe" | Where-Object { $_.Directory.Name -eq "win64" } | Select-Object -First 1 -ExpandProperty FullName
+              
+              if (!$nssmExe) {
+                  # Fallback to any nssm.exe
                   $nssmExe = Get-ChildItem -Path $nssmDir -Recurse -Filter "nssm.exe" | Select-Object -First 1 -ExpandProperty FullName
-                  
-                  if (!$nssmExe) {
-                      Write-Host "Looking for nssm.exe in extracted files..."
-                      Get-ChildItem -Path $nssmDir -Recurse | Format-Table Name, FullName
-                      throw "nssm.exe not found in downloaded archive"
-                  }
-                  
-                  Write-Host "Found nssm.exe at: $nssmExe"
-                  
-              } catch {
-                  Write-Host "Failed to download nssm: $($_.Exception.Message)"
-                  Write-Host "Trying alternative download method..."
-                  
-                  # Alternative download method
-                  try {
-                      $webClient = New-Object System.Net.WebClient
-                      $webClient.DownloadFile($nssmUrl, $nssmZip)
-                      Expand-Archive -Path $nssmZip -DestinationPath $nssmDir -Force
-                      $nssmExe = Get-ChildItem -Path $nssmDir -Recurse -Filter "nssm.exe" | Select-Object -First 1 -ExpandProperty FullName
-                  } catch {
-                      Write-Host "Alternative download also failed: $($_.Exception.Message)"
-                      # Fallback to direct executable download
-                      $nssmExe = "$nssmDir\nssm.exe"
-                      $directUrl = "https://nssm.cc/ci/nssm-2.24-101-g897c7ad.zip"
-                      Invoke-WebRequest -Uri $directUrl -OutFile $nssmZip
-                      Expand-Archive -Path $nssmZip -DestinationPath $nssmDir -Force
-                      $nssmExe = Get-ChildItem -Path $nssmDir -Recurse -Filter "nssm.exe" | Select-Object -First 1 -ExpandProperty FullName
-                  }
               }
-          }
-          
-          # Verify nssm.exe exists
-          if (!(Test-Path $nssmExe)) {
-              Write-Host "nssm.exe still not found. Available files:"
-              Get-ChildItem -Path $nssmDir -Recurse -ErrorAction SilentlyContinue | Format-Table Name, FullName
-              throw "nssm.exe could not be downloaded or found"
           }
           
           Write-Host "Using nssm from: $nssmExe"
           
           # Clean and deploy application
           if (Test-Path $deployDir) { 
-              Write-Host "Cleaning deployment directory..."
               Remove-Item "$deployDir\*" -Recurse -Force -ErrorAction SilentlyContinue 
           } else { 
               New-Item -ItemType Directory -Path $deployDir -Force 
           }
-          
-          Write-Host "Copying published files..."
           Copy-Item -Path ".\published\*" -Destination $deployDir -Recurse -Force
           
           # Stop and remove existing service
           Write-Host "Stopping and removing existing service..."
           & $nssmExe stop $serviceName -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 3
+          Start-Sleep -Seconds 2
           & $nssmExe remove $serviceName confirm -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 2
           
-          # Install with nssm - using the EXE file directly
-          $exePath = Join-Path $deployDir "BuildWebApp.exe"
+          # Find the main DLL (use the DLL instead of EXE for dotnet CLI)
+          $dllFile = Get-ChildItem -Path $deployDir -Filter "*.dll" | 
+                      Where-Object { $_.Name -notlike "*test*" -and $_.Name -notlike "*Test*" -and $_.Name -notlike "*Microsoft.*" -and $_.Name -notlike "*System.*" } | 
+                      Select-Object -First 1
           
-          if (!(Test-Path $exePath)) {
-              Write-Host "ERROR: BuildWebApp.exe not found at $exePath"
-              Write-Host "Available files in deployment directory:"
-              Get-ChildItem $deployDir | Format-Table Name, Length
-              throw "Application executable not found"
+          if (!$dllFile) {
+              Write-Host "No main DLL found. Available DLLs:"
+              Get-ChildItem -Path $deployDir -Filter "*.dll" | Format-Table Name
+              throw "Main application DLL not found"
           }
           
-          Write-Host "Installing service with nssm..."
-          & $nssmExe install $serviceName $exePath "--urls http://0.0.0.0:5000"
+          Write-Host "Using DLL: $($dllFile.Name)"
+          
+          # Install with nssm using dotnet CLI to run the DLL
+          Write-Host "Installing service with nssm using dotnet CLI..."
+          & $nssmExe install $serviceName "dotnet" "`"$($dllFile.FullName)`" --urls http://0.0.0.0:5000"
           
           if ($LASTEXITCODE -ne 0) {
               throw "Failed to install service with nssm. Exit code: $LASTEXITCODE"
@@ -182,53 +143,69 @@ jobs:
           & $nssmExe set $serviceName AppRotateOnline 1
           & $nssmExe set $serviceName AppRotateSeconds 86400
           & $nssmExe set $serviceName AppRotateBytes 1048576
-          
-          # Set service to restart on failure
           & $nssmExe set $serviceName AppExit Default Restart
           & $nssmExe set $serviceName AppThrottle 15000
+          
+          # Set the environment to find dotnet executable
+          & $nssmExe set $serviceName AppEnvironmentExtra "PATH=$env:PATH"
           
           # Start service
           Write-Host "Starting service..."
           & $nssmExe start $serviceName
           
-          if ($LASTEXITCODE -ne 0) {
-              Write-Host "WARNING: Service start returned exit code: $LASTEXITCODE"
-          }
-          
           # Wait and check status
-          Start-Sleep -Seconds 5
+          Start-Sleep -Seconds 10  # Give more time for .NET app to start
           $service = Get-Service $serviceName -ErrorAction SilentlyContinue
           
           if ($service -and $service.Status -eq 'Running') {
-              Write-Host "SUCCESS: Service is running with nssm!"
+              Write-Host "SUCCESS: Service is running!"
               
-              # Test the application
-              Start-Sleep -Seconds 3
-              try {
-                  $response = Invoke-RestMethod -Uri "http://localhost:5000" -TimeoutSec 10 -ErrorAction SilentlyContinue
-                  Write-Host "Service is responding on port 5000"
-              } catch {
-                  Write-Host "Service might be starting... check logs in: $deployDir\service.log"
+              # Test the application with retry logic
+              $maxRetries = 5
+              $retryCount = 0
+              $success = $false
+              
+              while ($retryCount -lt $maxRetries -and !$success) {
+                  try {
+                      Write-Host "Testing application (attempt $($retryCount + 1))..."
+                      $response = Invoke-WebRequest -Uri "http://localhost:5000" -TimeoutSec 10 -ErrorAction Stop
+                      Write-Host "SUCCESS: Application is responding on port 5000. Status: $($response.StatusCode)"
+                      $success = $true
+                  } catch {
+                      $retryCount++
+                      if ($retryCount -lt $maxRetries) {
+                          Write-Host "Application not ready yet, retrying in 5 seconds..."
+                          Start-Sleep -Seconds 5
+                      } else {
+                          Write-Host "Application not responding after $maxRetries attempts"
+                      }
+                  }
               }
               
               # Show recent logs
               if (Test-Path "$deployDir\service.log") {
                   Write-Host "=== Recent Service Logs ==="
-                  Get-Content "$deployDir\service.log" -Tail 10 -ErrorAction SilentlyContinue
+                  Get-Content "$deployDir\service.log" -Tail 20 -ErrorAction SilentlyContinue
               }
           } else {
-              Write-Host "Service status: $($service.Status)"
-              Write-Host "Checking service logs..."
+              Write-Host "Service failed to start. Current status: $($service.Status)"
               
+              # Check service logs
+              Write-Host "=== Checking Service Logs ==="
               if (Test-Path "$deployDir\service_error.log") {
-                  Write-Host "=== Service Error Logs ==="
+                  Write-Host "Error Log:"
                   Get-Content "$deployDir\service_error.log" -ErrorAction SilentlyContinue
               }
-              
               if (Test-Path "$deployDir\service.log") {
-                  Write-Host "=== Service Logs ==="
+                  Write-Host "Service Log:"
                   Get-Content "$deployDir\service.log" -ErrorAction SilentlyContinue
               }
+              
+              # Check Windows event logs for .NET errors
+              Write-Host "=== Checking Windows Event Logs ==="
+              Get-EventLog -LogName Application -Newest 10 -EntryType Error | 
+                  Where-Object { $_.Source -eq ".NET Runtime" -or $_.Source -eq "Application Error" } |
+                  Format-Table TimeGenerated, Source, Message -Wrap -AutoSize
           }
           
           Write-Host "Deployment process completed."
