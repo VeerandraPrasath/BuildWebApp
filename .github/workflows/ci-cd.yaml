@@ -48,7 +48,8 @@ jobs:
 
       - id: publish
         name: Publish
-        run: dotnet publish "BuildWebApp/BuildWebApp.csproj" -c Release -o published --self-contained -r win-x64 /p:UseAppHost=true
+        run: dotnet publish BuildWebApp/BuildWebApp.csproj -c Release -o published --self-contained -r win-x64 /p:UseAppHost=true
+
 
       - name: Zip Artifact
         run: Compress-Archive -Path published\* -DestinationPath app.zip
@@ -75,14 +76,12 @@ jobs:
           Write-Host "Copying published files to $deployDir..."
           Copy-Item -Path ".\published\*" -Destination $deployDir -Recurse -Force
       
-          # Ensure wwwroot exists in published output
-          if (!(Test-Path (Join-Path $deployDir "wwwroot"))) {
-            Write-Host "WARNING: wwwroot not published. Check csproj settings."
-          }
-      
-          # Run the app in the foreground so it stays alive
+          # Run the app in background
           $dllPath = Join-Path $deployDir "BuildWebApp.dll"
-          Write-Host "Starting BuildWebApp locally..."
-          dotnet $dllPath --urls http://0.0.0.0:5000
+          Write-Host "Starting BuildWebApp locally (background)..."
+          Start-Process "dotnet" -ArgumentList "`"$dllPath`" --urls http://0.0.0.0:5000" -WindowStyle Hidden
+      
+          Write-Host "Deployment complete. App should be running at http://localhost:5000"
+
 
 
