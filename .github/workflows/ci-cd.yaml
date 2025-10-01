@@ -75,12 +75,14 @@ jobs:
           Write-Host "Copying published files to $deployDir..."
           Copy-Item -Path ".\published\*" -Destination $deployDir -Recurse -Force
       
-          # Run the app
+          # Ensure wwwroot exists in published output
+          if (!(Test-Path (Join-Path $deployDir "wwwroot"))) {
+            Write-Host "WARNING: wwwroot not published. Check csproj settings."
+          }
+      
+          # Run the app in the foreground so it stays alive
           $dllPath = Join-Path $deployDir "BuildWebApp.dll"
           Write-Host "Starting BuildWebApp locally..."
-          Start-Process "dotnet" -ArgumentList "`"$dllPath`" --urls http://localhost:5000" -NoNewWindow -PassThru
-      
-          Write-Host "Deployment complete. App should be running at http://localhost:5000"
-
+          dotnet $dllPath --urls http://0.0.0.0:5000
 
 
