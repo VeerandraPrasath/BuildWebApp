@@ -62,117 +62,98 @@ jobs:
           path: app.zip
 
       - id: deploy
-        name: Deploy & Debug Service Startup
+        name: Deploy using nssm (Recommended)
         run: |
           $serviceName = "BuildWebApp"
           $deployDir = "$env:USERPROFILE\BuildWebApp_deploy"
           
-          # Clean deployment
+          # Download nssm
+          $nssmDir = "$env:TEMP\nssm"
+          $nssmExe = "$nssmDir\win64\nssm.exe"
+          
+          if (!(Test-Path $nssmExe)) {
+              Write-Host "Downloading nssm..."
+              $nssmZip = "$env:TEMP\nssm.zip"
+              Invoke-WebRequest "https://nssm.cc/ci/nssm-2.24-101-g897c7ad.zip" -OutFile $nssmZip
+              Expand-Archive -Path $nssmZip -DestinationPath $nssmDir -Force
+          }
+          
+          # Clean and deploy
           if (Test-Path $deployDir) { 
               Remove-Item "$deployDir\*" -Recurse -Force -ErrorAction SilentlyContinue 
           } else { 
               New-Item -ItemType Directory -Path $deployDir -Force 
           }
-      
-          # Copy files
           Copy-Item -Path ".\published\*" -Destination $deployDir -Recurse -Force
-      
-          # Test the application manually first
-          Write-Host "=== Testing application manually ==="
+          
+          # Stop and remove existing service
+          & $nssmExe stop $serviceName -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 3
+          & $nssmExe remove $serviceName confirm -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+          
+          # Install with nssm - using the EXE file directly
           $exePath = Join-Path $deployDir "BuildWebApp.exe"
           
-          # Test if the app runs correctly
-          Write-Host "Testing application execution..."
-          $process = Start-Process -FilePath $exePath -ArgumentList "--urls http://0.0.0.0:5000" -PassThru -NoNewWindow
+          Write-Host "Installing service with nssm..."
+          & $nssmExe install $serviceName $exePath "--urls http://0.0.0.0:5000"
+          
+          # Configure nssm service settings
+          & $nssmExe set $serviceName DisplayName "Build Web App"
+          & $nssmExe set $serviceName Description "Build Web Application Service"
+          & $nssmExe set $serviceName Start SERVICE_AUTO_START
+          & $nssmExe set $serviceName AppDirectory $deployDir
+          & $nssmExe set $serviceName AppStdout "$deployDir\service.log"
+          & $nssmExe set $serviceName AppStderr "$deployDir\service_error.log"
+          & $nssmExe set $serviceName AppRotateFiles 1
+          & $nssmExe set $serviceName AppRotateOnline 1
+          & $nssmExe set $serviceName AppRotateSeconds 86400
+          & $nssmExe set $serviceName AppRotateBytes 1048576
+          
+          # Set service to restart on failure
+          & $nssmExe set $serviceName AppExit Default Restart
+          & $nssmExe set $serviceName AppThrottle 15000
+          
+          # Start service
+          Write-Host "Starting service..."
+          & $nssmExe start $serviceName
+          
+          # Wait and check status
           Start-Sleep -Seconds 5
+          $service = Get-Service $serviceName -ErrorAction SilentlyContinue
           
-          # Check if process is running
-          if (!$process.HasExited) {
-              Write-Host "Application started successfully manually. Process ID: $($process.Id)"
+          if ($service -and $service.Status -eq 'Running') {
+              Write-Host "SUCCESS: Service is running with nssm!"
               
-              # Test if the app is responding
-              try {
-                  $response = Invoke-WebRequest -Uri "http://localhost:5000" -TimeoutSec 10 -ErrorAction SilentlyContinue
-                  Write-Host "Application is responding on port 5000. Status: $($response.StatusCode)"
-              } catch {
-                  Write-Host "Application is running but not responding on port 5000. Error: $($_.Exception.Message)"
-              }
-              
-              # Stop the manual process
-              Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-              Write-Host "Stopped manual test process"
-          } else {
-              Write-Host "Application failed to start manually. Exit code: $($process.ExitCode)"
-          }
-      
-          # Remove existing service
-          $existingService = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
-          if ($existingService) {
-              Write-Host "Removing existing service..."
-              Stop-Service $serviceName -Force -ErrorAction SilentlyContinue
-              sc.exe delete $serviceName
-              Start-Sleep -Seconds 3
-          }
-      
-          # Install service with proper configuration
-          Write-Host "=== Installing Windows Service ==="
-          
-          # Use LocalSystem account which has more privileges
-          sc.exe create $serviceName `
-              binPath= "`"$exePath`" --urls http://0.0.0.0:5000" `
-              displayname= "Build Web App" `
-              start= auto `
-              obj= "LocalSystem" `
-              depend= "HTTP/WebServiceAgent"
-          
-          # Configure service recovery options
-          sc.exe failure $serviceName reset= 60 actions= restart/5000/restart/5000/restart/5000
-          sc.exe failureflag $serviceName 1
-          
-          # Set service description
-          sc.exe description $serviceName "Build Web Application Service"
-          
-          Write-Host "Service installed. Starting..."
-          
-          # Start service with longer timeout
-          $timeout = 60
-          $startTime = Get-Date
-          Start-Service $serviceName
-          
-          # Wait for service to start
-          do {
-              Start-Sleep -Seconds 2
-              $service = Get-Service $serviceName
-              Write-Host "Service status: $($service.Status)"
-              
-              if ((Get-Date) - $startTime -gt [TimeSpan]::FromSeconds($timeout)) {
-                  Write-Host "Service start timeout reached"
-                  break
-              }
-          } while ($service.Status -eq 'StartPending')
-          
-          if ($service.Status -eq 'Running') {
-              Write-Host "SUCCESS: Service is running!"
-              
-              # Verify the service is actually working
+              # Test the application
               Start-Sleep -Seconds 3
               try {
                   $response = Invoke-WebRequest -Uri "http://localhost:5000" -TimeoutSec 10 -ErrorAction SilentlyContinue
                   Write-Host "Service is responding on port 5000. Status: $($response.StatusCode)"
               } catch {
-                  Write-Host "WARNING: Service is running but not responding on port 5000"
+                  Write-Host "Service might be starting... check logs in: $deployDir\service.log"
+              }
+              
+              # Show recent logs
+              if (Test-Path "$deployDir\service.log") {
+                  Write-Host "=== Recent Service Logs ==="
+                  Get-Content "$deployDir\service.log" -Tail 10 -ErrorAction SilentlyContinue
               }
           } else {
-              Write-Host "FAILED: Service could not start. Current status: $($service.Status)"
+              Write-Host "Service failed to start. Checking logs..."
               
-              # Get detailed error information
-              Write-Host "=== Checking Event Logs for Errors ==="
-              Get-EventLog -LogName Application -Newest 20 | 
-                  Where-Object { $_.Source -like "*BuildWebApp*" -or $_.Message -like "*BuildWebApp*" -or $_.Source -eq ".NET Runtime" } |
-                  Format-Table TimeGenerated, EntryType, Source, Message -Wrap -AutoSize
+              if (Test-Path "$deployDir\service_error.log") {
+                  Write-Host "=== Service Error Logs ==="
+                  Get-Content "$deployDir\service_error.log" -ErrorAction SilentlyContinue
+              }
               
-              Write-Host "=== Service Control Manager Events ==="
-              Get-EventLog -LogName System -Source "Service Control Manager" -Newest 10 |
-                  Where-Object { $_.Message -like "*BuildWebApp*" } |
+              if (Test-Path "$deployDir\service.log") {
+                  Write-Host "=== Service Logs ==="
+                  Get-Content "$deployDir\service.log" -ErrorAction SilentlyContinue
+              }
+              
+              # Check event logs
+              Get-EventLog -LogName Application -Newest 10 | 
+                  Where-Object { $_.Source -eq ".NET Runtime" } |
                   Format-Table TimeGenerated, EntryType, Message -Wrap -AutoSize
           }
