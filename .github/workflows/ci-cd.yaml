@@ -63,6 +63,7 @@ jobs:
 
       - id: deploy
         name: Deploy & Run as Windows Service (Self-Host)
+        shell: powershell
         run: |
           # Deployment folder
           $deployDir = "$env:USERPROFILE\BuildWebApp_deploy"
@@ -71,10 +72,10 @@ jobs:
           # Copy published files
           Write-Host "Copying published files to $deployDir..."
           Copy-Item -Path ".\published\*" -Destination $deployDir -Recurse -Force
-
+      
           # Stop and delete existing service if exists
-          sc.exe stop BuildWebAppService || echo "Service not running"
-          sc.exe delete BuildWebAppService || echo "Service not found"
+          sc.exe stop BuildWebAppService 2>$null
+          sc.exe delete BuildWebAppService 2>$null
 
           # Create service pointing to the published DLL
           $dllPath = Join-Path $deployDir "BuildWebApp.dll"
@@ -84,9 +85,9 @@ jobs:
 
           # Start the service
           sc.exe start BuildWebAppService
-      
+
           Write-Host "Deployment complete. App is running as a Windows Service on http://localhost:5000"
-        shell: pwsh
+
 
 
 
