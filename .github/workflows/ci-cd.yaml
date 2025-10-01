@@ -62,23 +62,38 @@ jobs:
           path: app.zip
 
       - id: deploy
-        name: Deploy & Run Locally (Self-Host)
+        name: Deploy & Install as Windows Service
         run: |
-          # Stop any running instance
-          Write-Host "Stopping any running BuildWebApp process..."
-          Get-Process BuildWebApp -ErrorAction SilentlyContinue | Stop-Process -Force
+          # Stop and remove existing service
+          $serviceName = "BuildWebApp"
+          Write-Host "Stopping and removing existing service..."
+          Stop-Service $serviceName -ErrorAction SilentlyContinue
+          sc.exe delete $serviceName -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
       
           # Deployment folder
           $deployDir = "$env:USERPROFILE\BuildWebApp_deploy"
-          if (!(Test-Path $deployDir)) { New-Item -ItemType Directory -Path $deployDir }
+          if (!(Test-Path $deployDir)) { New-Item -ItemType Directory -Path $deployDir -Force }
       
           # Copy published files
           Write-Host "Copying published files to $deployDir..."
           Copy-Item -Path ".\published\*" -Destination $deployDir -Recurse -Force
       
-          # Run the app in background
-          $dllPath = Join-Path $deployDir "BuildWebApp.dll"
-          Write-Host "Starting BuildWebApp locally (background)..."
-          Start-Process "dotnet" -ArgumentList "`"$dllPath`" --urls http://0.0.0.0:5000" -WindowStyle Hidden
+          # Install as Windows Service
+          $exePath = Join-Path $deployDir "BuildWebApp.exe"
+          if (Test-Path $exePath) {
+              Write-Host "Installing as Windows Service..."
+              New-Service -Name $serviceName -BinaryPathName "`"$exePath`" --urls http://0.0.0.0:5000" -DisplayName "Build Web App" -StartupType Automatic -ErrorAction Stop
+          } else {
+              # If no exe, use dotnet with the DLL
+              $dllPath = Join-Path $deployDir "BuildWebApp.dll"
+              Write-Host "Installing as Windows Service using dotnet..."
+              sc.exe create $serviceName binPath= "dotnet `"$dllPath`" --urls http://0.0.0.0:5000" start= auto
+          }
+      
+          # Start the service
+          Write-Host "Starting service..."
+          Start-Service $serviceName
+          Write-Host "Service status: $(Get-Service $serviceName | Select-Object -ExpandProperty Status)"
       
           Write-Host "Deployment complete. App should be running at http://localhost:5000"

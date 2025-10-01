@@ -6,6 +6,12 @@ namespace BuildWebApp
         {
             var builder = WebApplication.CreateBuilder(args);
 
+            // Add graceful shutdown support
+            builder.Services.Configure<HostOptions>(opts =>
+            {
+                opts.ShutdownTimeout = TimeSpan.FromSeconds(30);
+            });
+
             // Add services to the container.
             builder.Services.AddRazorPages();
 
