@@ -61,151 +61,46 @@ jobs:
           name: dotnet-webapp
           path: app.zip
 
-      - id: deploy
-        name: Deploy using nssm with dotnet CLI
+      - name: Debug Application Startup
         run: |
-          $serviceName = "BuildWebApp"
           $deployDir = "$env:USERPROFILE\BuildWebApp_deploy"
           
-          # Download nssm
-          $nssmDir = "$env:TEMP\nssm"
-          $nssmExe = "$nssmDir\nssm.exe"
+          # Test running the EXE directly
+          Write-Host "=== Testing EXE directly ==="
+          $exePath = Join-Path $deployDir "BuildWebApp.exe"
+          $process = Start-Process -FilePath $exePath -ArgumentList "--urls http://0.0.0.0:5000" -PassThru -NoNewWindow
+          Start-Sleep -Seconds 5
           
-          if (!(Test-Path $nssmExe)) {
-              Write-Host "Downloading nssm..."
-              if (Test-Path $nssmDir) {
-                  Remove-Item $nssmDir -Recurse -Force -ErrorAction SilentlyContinue
+          if (!$process.HasExited) {
+              Write-Host "EXE started successfully. PID: $($process.Id)"
+              try {
+                  $response = Invoke-WebRequest -Uri "http://localhost:5000" -TimeoutSec 5
+                  Write-Host "EXE is responding on port 5000"
+              } catch {
+                  Write-Host "EXE is running but not responding: $($_.Exception.Message)"
               }
-              New-Item -ItemType Directory -Path $nssmDir -Force
-              
-              $nssmUrl = "https://nssm.cc/release/nssm-2.24.zip"
-              $nssmZip = "$env:TEMP\nssm.zip"
-              
-              Invoke-WebRequest -Uri $nssmUrl -OutFile $nssmZip
-              Expand-Archive -Path $nssmZip -DestinationPath $nssmDir -Force
-              
-              # Find nssm.exe in win64 folder (64-bit version)
-              $nssmExe = Get-ChildItem -Path $nssmDir -Recurse -Filter "nssm.exe" | Where-Object { $_.Directory.Name -eq "win64" } | Select-Object -First 1 -ExpandProperty FullName
-              
-              if (!$nssmExe) {
-                  # Fallback to any nssm.exe
-                  $nssmExe = Get-ChildItem -Path $nssmDir -Recurse -Filter "nssm.exe" | Select-Object -First 1 -ExpandProperty FullName
-              }
-          }
-          
-          Write-Host "Using nssm from: $nssmExe"
-          
-          # Clean and deploy application
-          if (Test-Path $deployDir) { 
-              Remove-Item "$deployDir\*" -Recurse -Force -ErrorAction SilentlyContinue 
-          } else { 
-              New-Item -ItemType Directory -Path $deployDir -Force 
-          }
-          Copy-Item -Path ".\published\*" -Destination $deployDir -Recurse -Force
-          
-          # Stop and remove existing service
-          Write-Host "Stopping and removing existing service..."
-          & $nssmExe stop $serviceName -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 2
-          & $nssmExe remove $serviceName confirm -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 2
-          
-          # Find the main DLL (use the DLL instead of EXE for dotnet CLI)
-          $dllFile = Get-ChildItem -Path $deployDir -Filter "*.dll" | 
-                      Where-Object { $_.Name -notlike "*test*" -and $_.Name -notlike "*Test*" -and $_.Name -notlike "*Microsoft.*" -and $_.Name -notlike "*System.*" } | 
-                      Select-Object -First 1
-          
-          if (!$dllFile) {
-              Write-Host "No main DLL found. Available DLLs:"
-              Get-ChildItem -Path $deployDir -Filter "*.dll" | Format-Table Name
-              throw "Main application DLL not found"
-          }
-          
-          Write-Host "Using DLL: $($dllFile.Name)"
-          
-          # Install with nssm using dotnet CLI to run the DLL
-          Write-Host "Installing service with nssm using dotnet CLI..."
-          & $nssmExe install $serviceName "dotnet" "`"$($dllFile.FullName)`" --urls http://0.0.0.0:5000"
-          
-          if ($LASTEXITCODE -ne 0) {
-              throw "Failed to install service with nssm. Exit code: $LASTEXITCODE"
-          }
-          
-          # Configure nssm service settings
-          Write-Host "Configuring service settings..."
-          & $nssmExe set $serviceName DisplayName "Build Web App"
-          & $nssmExe set $serviceName Description "Build Web Application Service"
-          & $nssmExe set $serviceName Start SERVICE_AUTO_START
-          & $nssmExe set $serviceName AppDirectory $deployDir
-          & $nssmExe set $serviceName AppStdout "$deployDir\service.log"
-          & $nssmExe set $serviceName AppStderr "$deployDir\service_error.log"
-          & $nssmExe set $serviceName AppRotateFiles 1
-          & $nssmExe set $serviceName AppRotateOnline 1
-          & $nssmExe set $serviceName AppRotateSeconds 86400
-          & $nssmExe set $serviceName AppRotateBytes 1048576
-          & $nssmExe set $serviceName AppExit Default Restart
-          & $nssmExe set $serviceName AppThrottle 15000
-          
-          # Set the environment to find dotnet executable
-          & $nssmExe set $serviceName AppEnvironmentExtra "PATH=$env:PATH"
-          
-          # Start service
-          Write-Host "Starting service..."
-          & $nssmExe start $serviceName
-          
-          # Wait and check status
-          Start-Sleep -Seconds 10  # Give more time for .NET app to start
-          $service = Get-Service $serviceName -ErrorAction SilentlyContinue
-          
-          if ($service -and $service.Status -eq 'Running') {
-              Write-Host "SUCCESS: Service is running!"
-              
-              # Test the application with retry logic
-              $maxRetries = 5
-              $retryCount = 0
-              $success = $false
-              
-              while ($retryCount -lt $maxRetries -and !$success) {
-                  try {
-                      Write-Host "Testing application (attempt $($retryCount + 1))..."
-                      $response = Invoke-WebRequest -Uri "http://localhost:5000" -TimeoutSec 10 -ErrorAction Stop
-                      Write-Host "SUCCESS: Application is responding on port 5000. Status: $($response.StatusCode)"
-                      $success = $true
-                  } catch {
-                      $retryCount++
-                      if ($retryCount -lt $maxRetries) {
-                          Write-Host "Application not ready yet, retrying in 5 seconds..."
-                          Start-Sleep -Seconds 5
-                      } else {
-                          Write-Host "Application not responding after $maxRetries attempts"
-                      }
-                  }
-              }
-              
-              # Show recent logs
-              if (Test-Path "$deployDir\service.log") {
-                  Write-Host "=== Recent Service Logs ==="
-                  Get-Content "$deployDir\service.log" -Tail 20 -ErrorAction SilentlyContinue
-              }
+              Stop-Process -Id $process.Id -Force
           } else {
-              Write-Host "Service failed to start. Current status: $($service.Status)"
-              
-              # Check service logs
-              Write-Host "=== Checking Service Logs ==="
-              if (Test-Path "$deployDir\service_error.log") {
-                  Write-Host "Error Log:"
-                  Get-Content "$deployDir\service_error.log" -ErrorAction SilentlyContinue
-              }
-              if (Test-Path "$deployDir\service.log") {
-                  Write-Host "Service Log:"
-                  Get-Content "$deployDir\service.log" -ErrorAction SilentlyContinue
-              }
-              
-              # Check Windows event logs for .NET errors
-              Write-Host "=== Checking Windows Event Logs ==="
-              Get-EventLog -LogName Application -Newest 10 -EntryType Error | 
-                  Where-Object { $_.Source -eq ".NET Runtime" -or $_.Source -eq "Application Error" } |
-                  Format-Table TimeGenerated, Source, Message -Wrap -AutoSize
+              Write-Host "EXE failed to start. Exit code: $($process.ExitCode)"
           }
           
-          Write-Host "Deployment process completed."
+          # Test running via dotnet CLI
+          Write-Host "=== Testing via dotnet CLI ==="
+          $dllFile = Get-ChildItem -Path $deployDir -Filter "BuildWebApp.dll" | Select-Object -First 1
+          if ($dllFile) {
+              $process = Start-Process -FilePath "dotnet" -ArgumentList "`"$($dllFile.FullName)`" --urls http://0.0.0.0:5000" -PassThru -NoNewWindow
+              Start-Sleep -Seconds 5
+              
+              if (!$process.HasExited) {
+                  Write-Host "Dotnet started successfully. PID: $($process.Id)"
+                  try {
+                      $response = Invoke-WebRequest -Uri "http://localhost:5000" -TimeoutSec 5
+                      Write-Host "Dotnet is responding on port 5000"
+                  } catch {
+                      Write-Host "Dotnet is running but not responding: $($_.Exception.Message)"
+                  }
+                  Stop-Process -Id $process.Id -Force
+              } else {
+                  Write-Host "Dotnet failed to start. Exit code: $($process.ExitCode)"
+              }
+          }
