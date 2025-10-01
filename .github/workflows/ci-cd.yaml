@@ -65,41 +65,41 @@ jobs:
         name: Deploy & Run as Windows Service (Self-Host)
         shell: powershell
         run: |
-         # Deployment folder
-         $deployDir = "$env:USERPROFILE\BuildWebApp_deploy"
-         if (!(Test-Path $deployDir)) { New-Item -ItemType Directory -Path $deployDir }
+          # Deployment folder
+          $deployDir = "$env:USERPROFILE\BuildWebApp_deploy"
+          if (!(Test-Path $deployDir)) { New-Item -ItemType Directory -Path $deployDir }
+          
+          # Copy published files
+          Write-Host "Copying published files to $deployDir..."
+          Copy-Item -Path ".\published\*" -Destination $deployDir -Recurse -Force
+          
+          # Stop and delete existing service if it exists
+          Write-Host "Stopping and deleting existing service if present..."
+          sc.exe stop BuildWebAppService 2>$null
+          sc.exe delete BuildWebAppService 2>$null
+          
+          # Paths
+          $dllPath = Join-Path $deployDir "BuildWebApp.dll"
+          $dotnetExe = "C:\Program Files\dotnet\dotnet.exe"
+          
+          # Properly escape the quotes for SC
+          $binPath = "`"$dotnetExe`" `"$dllPath`" --urls http://0.0.0.0:5000"
+          
+          # Wrap the entire binPath value in quotes for SC
+          $binPathQuoted = '"' + $binPath + '"'
+          
+          Write-Host "Creating Windows Service for BuildWebApp..."
+          # Space after binPath= is required
+          sc.exe create BuildWebAppService binPath= $binPathQuoted start= auto
+          
+          # Check if the service was created before starting
+          $svc = Get-Service -Name BuildWebAppService -ErrorAction SilentlyContinue
+          if ($svc) {
+              Write-Host "Starting Windows Service..."
+              sc.exe start BuildWebAppService
+          } else {
+              Write-Host "Service creation failed. Check the binPath syntax and permissions."
+          }
+          
+          Write-Host "Deployment step finished."
          
-         # Copy published files
-         Write-Host "Copying published files to $deployDir..."
-         Copy-Item -Path ".\published\*" -Destination $deployDir -Recurse -Force
-         
-         # Stop and delete existing service if it exists
-         Write-Host "Stopping and deleting existing service if present..."
-         sc.exe stop BuildWebAppService 2>$null
-         sc.exe delete BuildWebAppService 2>$null
-         
-         # Paths
-         $dllPath = Join-Path $deployDir "BuildWebApp.dll"
-         $dotnetExe = "C:\Program Files\dotnet\dotnet.exe"
-         
-         # Properly format binPath for SC with quotes around paths
-         # Important: binPath= must have a space after the equal sign
-         $binPath = "`"$dotnetExe`" `"$dllPath`" --urls http://0.0.0.0:5000"
-         
-         Write-Host "Creating Windows Service for BuildWebApp..."
-         # Notice the space after binPath=
-         sc.exe create BuildWebAppService binPath= $binPath start= auto
-         
-         # Start the service
-         Write-Host "Starting Windows Service..."
-         sc.exe start BuildWebAppService
-         
-         Write-Host "Deployment complete. App is running as a Windows Service on http://localhost:5000"
-
-
-
-
-
-
-
-
