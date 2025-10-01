@@ -81,3 +81,4 @@ jobs:
           Start-Process "dotnet" -ArgumentList "`"$dllPath`" --urls http://localhost:5000" -NoNewWindow -PassThru
       
           Write-Host "Deployment complete. App should be running at http://localhost:5000"
+
