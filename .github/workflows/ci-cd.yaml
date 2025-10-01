@@ -62,98 +62,117 @@ jobs:
           path: app.zip
 
       - id: deploy
-        name: Deploy & Install as Windows Service
+        name: Deploy & Debug Service Startup
         run: |
           $serviceName = "BuildWebApp"
           $deployDir = "$env:USERPROFILE\BuildWebApp_deploy"
           
-          # Stop and remove existing service if it exists
-          Write-Host "Checking for existing service..."
-          $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
-          if ($service) {
-              Write-Host "Stopping existing service..."
-              Stop-Service $serviceName -Force -ErrorAction SilentlyContinue
-              Start-Sleep -Seconds 3
-              Write-Host "Removing existing service..."
-              sc.exe delete $serviceName
-              Start-Sleep -Seconds 2
-          }
-      
-          # Ensure deployment directory exists
-          if (!(Test-Path $deployDir)) { 
+          # Clean deployment
+          if (Test-Path $deployDir) { 
+              Remove-Item "$deployDir\*" -Recurse -Force -ErrorAction SilentlyContinue 
+          } else { 
               New-Item -ItemType Directory -Path $deployDir -Force 
           }
       
-          # Clean deployment directory
-          Write-Host "Cleaning deployment directory..."
-          Remove-Item "$deployDir\*" -Recurse -Force -ErrorAction SilentlyContinue
-      
-          # Copy published files
-          Write-Host "Copying published files to $deployDir..."
+          # Copy files
           Copy-Item -Path ".\published\*" -Destination $deployDir -Recurse -Force
       
-          # Check what files were copied
-          Write-Host "Files in deployment directory:"
-          Get-ChildItem $deployDir
-      
-          # Try different service installation approaches
-      
-          # Approach 1: Check if it's a self-contained executable
-          $exePath = Get-ChildItem -Path $deployDir -Filter "*.exe" | Select-Object -First 1
-          if ($exePath) {
-              Write-Host "Found EXE file: $($exePath.Name)"
-              $binaryPath = "`"$($exePath.FullName)`" --urls http://0.0.0.0:5000"
+          # Test the application manually first
+          Write-Host "=== Testing application manually ==="
+          $exePath = Join-Path $deployDir "BuildWebApp.exe"
+          
+          # Test if the app runs correctly
+          Write-Host "Testing application execution..."
+          $process = Start-Process -FilePath $exePath -ArgumentList "--urls http://0.0.0.0:5000" -PassThru -NoNewWindow
+          Start-Sleep -Seconds 5
+          
+          # Check if process is running
+          if (!$process.HasExited) {
+              Write-Host "Application started successfully manually. Process ID: $($process.Id)"
+              
+              # Test if the app is responding
+              try {
+                  $response = Invoke-WebRequest -Uri "http://localhost:5000" -TimeoutSec 10 -ErrorAction SilentlyContinue
+                  Write-Host "Application is responding on port 5000. Status: $($response.StatusCode)"
+              } catch {
+                  Write-Host "Application is running but not responding on port 5000. Error: $($_.Exception.Message)"
+              }
+              
+              # Stop the manual process
+              Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+              Write-Host "Stopped manual test process"
           } else {
-              # Approach 2: Use dotnet with DLL
-              $dllPath = Get-ChildItem -Path $deployDir -Filter "*.dll" | Where-Object { $_.Name -notlike "*test*" -and $_.Name -notlike "*Test*" } | Select-Object -First 1
-              if ($dllPath) {
-                  Write-Host "Found DLL file: $($dllPath.Name)"
-                  $binaryPath = "dotnet `"$($dllPath.FullName)`" --urls http://0.0.0.0:5000"
-              } else {
-                  Write-Error "No executable or DLL found in published output"
-                  exit 1
-              }
+              Write-Host "Application failed to start manually. Exit code: $($process.ExitCode)"
           }
       
-          Write-Host "Installing service with binary path: $binaryPath"
-      
-          # Install the service
-          try {
-              New-Service -Name $serviceName `
-                          -BinaryPathName $binaryPath `
-                          -DisplayName "Build Web App" `
-                          -Description "Build Web Application Service" `
-                          -StartupType Automatic `
-                          -ErrorAction Stop
-              
-              Write-Host "Service installed successfully"
-              
-              # Grant the service necessary permissions
-              sc.exe sdset $serviceName "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)"
-              
-              # Start the service
-              Write-Host "Starting service..."
-              Start-Service $serviceName -ErrorAction Stop
-              Write-Host "Service started successfully"
-              
-              # Check service status
+          # Remove existing service
+          $existingService = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+          if ($existingService) {
+              Write-Host "Removing existing service..."
+              Stop-Service $serviceName -Force -ErrorAction SilentlyContinue
+              sc.exe delete $serviceName
               Start-Sleep -Seconds 3
-              $serviceStatus = Get-Service $serviceName
-              Write-Host "Service status: $($serviceStatus.Status)"
-              
-              # If service failed to start, check event logs
-              if ($serviceStatus.Status -ne "Running") {
-                  Write-Host "Checking application event logs for errors..."
-                  Get-EventLog -LogName Application -Source "Service Control Manager" -Newest 10 | 
-                      Where-Object { $_.Message -like "*$serviceName*" } | 
-                      Format-Table TimeGenerated, EntryType, Message -AutoSize
-              }
-              
-          } catch {
-              Write-Host "Error: $($_.Exception.Message)"
-              Write-Host "Checking system events for details..."
-              Get-EventLog -LogName System -Newest 5 | Format-Table TimeGenerated, EntryType, Source, Message -AutoSize
-              exit 1
           }
       
-          Write-Host "Deployment complete. App should be running at http://localhost:5000"
+          # Install service with proper configuration
+          Write-Host "=== Installing Windows Service ==="
+          
+          # Use LocalSystem account which has more privileges
+          sc.exe create $serviceName `
+              binPath= "`"$exePath`" --urls http://0.0.0.0:5000" `
+              displayname= "Build Web App" `
+              start= auto `
+              obj= "LocalSystem" `
+              depend= "HTTP/WebServiceAgent"
+          
+          # Configure service recovery options
+          sc.exe failure $serviceName reset= 60 actions= restart/5000/restart/5000/restart/5000
+          sc.exe failureflag $serviceName 1
+          
+          # Set service description
+          sc.exe description $serviceName "Build Web Application Service"
+          
+          Write-Host "Service installed. Starting..."
+          
+          # Start service with longer timeout
+          $timeout = 60
+          $startTime = Get-Date
+          Start-Service $serviceName
+          
+          # Wait for service to start
+          do {
+              Start-Sleep -Seconds 2
+              $service = Get-Service $serviceName
+              Write-Host "Service status: $($service.Status)"
+              
+              if ((Get-Date) - $startTime -gt [TimeSpan]::FromSeconds($timeout)) {
+                  Write-Host "Service start timeout reached"
+                  break
+              }
+          } while ($service.Status -eq 'StartPending')
+          
+          if ($service.Status -eq 'Running') {
+              Write-Host "SUCCESS: Service is running!"
+              
+              # Verify the service is actually working
+              Start-Sleep -Seconds 3
+              try {
+                  $response = Invoke-WebRequest -Uri "http://localhost:5000" -TimeoutSec 10 -ErrorAction SilentlyContinue
+                  Write-Host "Service is responding on port 5000. Status: $($response.StatusCode)"
+              } catch {
+                  Write-Host "WARNING: Service is running but not responding on port 5000"
+              }
+          } else {
+              Write-Host "FAILED: Service could not start. Current status: $($service.Status)"
+              
+              # Get detailed error information
+              Write-Host "=== Checking Event Logs for Errors ==="
+              Get-EventLog -LogName Application -Newest 20 | 
+                  Where-Object { $_.Source -like "*BuildWebApp*" -or $_.Message -like "*BuildWebApp*" -or $_.Source -eq ".NET Runtime" } |
+                  Format-Table TimeGenerated, EntryType, Source, Message -Wrap -AutoSize
+              
+              Write-Host "=== Service Control Manager Events ==="
+              Get-EventLog -LogName System -Source "Service Control Manager" -Newest 10 |
+                  Where-Object { $_.Message -like "*BuildWebApp*" } |
+                  Format-Table TimeGenerated, EntryType, Message -Wrap -AutoSize
+          }
