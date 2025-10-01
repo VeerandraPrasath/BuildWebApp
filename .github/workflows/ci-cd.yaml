@@ -61,46 +61,37 @@ jobs:
           name: dotnet-webapp
           path: app.zip
 
-      - name: Debug Application Startup
+      - id: deploy
+        name: Deploy & Run as Windows Service (Self-Host)
+        shell: C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.EXE -command ". '{0}'"
         run: |
+          # Deployment folder
           $deployDir = "$env:USERPROFILE\BuildWebApp_deploy"
-          
-          # Test running the EXE directly
-          Write-Host "=== Testing EXE directly ==="
-          $exePath = Join-Path $deployDir "BuildWebApp.exe"
-          $process = Start-Process -FilePath $exePath -ArgumentList "--urls http://0.0.0.0:5000" -PassThru -NoNewWindow
-          Start-Sleep -Seconds 5
-          
-          if (!$process.HasExited) {
-              Write-Host "EXE started successfully. PID: $($process.Id)"
-              try {
-                  $response = Invoke-WebRequest -Uri "http://localhost:5000" -TimeoutSec 5
-                  Write-Host "EXE is responding on port 5000"
-              } catch {
-                  Write-Host "EXE is running but not responding: $($_.Exception.Message)"
-              }
-              Stop-Process -Id $process.Id -Force
-          } else {
-              Write-Host "EXE failed to start. Exit code: $($process.ExitCode)"
-          }
-          
-          # Test running via dotnet CLI
-          Write-Host "=== Testing via dotnet CLI ==="
-          $dllFile = Get-ChildItem -Path $deployDir -Filter "BuildWebApp.dll" | Select-Object -First 1
-          if ($dllFile) {
-              $process = Start-Process -FilePath "dotnet" -ArgumentList "`"$($dllFile.FullName)`" --urls http://0.0.0.0:5000" -PassThru -NoNewWindow
-              Start-Sleep -Seconds 5
-              
-              if (!$process.HasExited) {
-                  Write-Host "Dotnet started successfully. PID: $($process.Id)"
-                  try {
-                      $response = Invoke-WebRequest -Uri "http://localhost:5000" -TimeoutSec 5
-                      Write-Host "Dotnet is responding on port 5000"
-                  } catch {
-                      Write-Host "Dotnet is running but not responding: $($_.Exception.Message)"
-                  }
-                  Stop-Process -Id $process.Id -Force
-              } else {
-                  Write-Host "Dotnet failed to start. Exit code: $($process.ExitCode)"
-              }
-          }
+          if (!(Test-Path $deployDir)) { New-Item -ItemType Directory -Path $deployDir }
+      
+          # Copy published files including wwwroot
+          Write-Host "Copying published files to $deployDir..."
+          Copy-Item -Path ".\published\*" -Destination $deployDir -Recurse -Force
+      
+          # Stop and delete existing service if present
+          Write-Host "Stopping and deleting existing service if present..."
+          sc.exe stop BuildWebAppService 2>$null
+          sc.exe delete BuildWebAppService 2>$null
+      
+          # Paths
+          $dllPath = Join-Path $deployDir "BuildWebApp.dll"
+          $dotnetExe = "C:\Program Files\dotnet\dotnet.exe"
+      
+          # Properly format binPath for SC with quotes around paths
+          # Important: binPath= must have a space after the equal sign
+          $binPath = "`"$dotnetExe`" `"$dllPath`" --urls http://0.0.0.0:5000 --contentRoot `"$deployDir`""
+      
+          Write-Host "Creating Windows Service for BuildWebApp..."
+          sc.exe create BuildWebAppService binPath= $binPath start= auto
+      
+          # Start the service
+          Write-Host "Starting Windows Service..."
+          sc.exe start BuildWebAppService
+      
+          Write-Host "Deployment complete. App is running as a Windows Service on http://localhost:5000"
+      
