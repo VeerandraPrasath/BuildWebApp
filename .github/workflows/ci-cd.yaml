@@ -85,6 +85,7 @@ jobs:
 
           # Properly quoted binPath
           $binPath = "`"$dotnetExe`" `"$dllPath`" --urls http://0.0.0.0:5000"
+
           Write-Host "Creating Windows Service for BuildWebApp..."
           sc.exe create BuildWebAppService binPath= "$binPath" start= auto
 
@@ -92,6 +93,7 @@ jobs:
           sc.exe start BuildWebAppService
 
           Write-Host "Deployment complete. App is running as a Windows Service on http://localhost:5000"
+
 
 
 
