@@ -68,7 +68,7 @@ jobs:
           # Deployment folder
           $deployDir = "$env:USERPROFILE\BuildWebApp_deploy"
           if (!(Test-Path $deployDir)) { New-Item -ItemType Directory -Path $deployDir }
-      
+
           # Copy published files
           Write-Host "Copying published files to $deployDir..."
           Copy-Item -Path ".\published\*" -Destination $deployDir -Recurse -Force
@@ -77,10 +77,14 @@ jobs:
           try { sc.exe stop BuildWebAppService 2>$null } catch {}
           try { sc.exe delete BuildWebAppService 2>$null } catch {}
 
-          # Create service pointing to the published DLL
+          # DLL path
           $dllPath = Join-Path $deployDir "BuildWebApp.dll"
-          # Important: binPath= must have a space after '=' and the full path must be quoted properly
-          $binPath = "`"C:\Program Files\dotnet\dotnet.exe`" `"$dllPath`" --urls http://0.0.0.0:5000"
+
+          # Full path to dotnet.exe
+          $dotnetExe = "C:\Program Files\dotnet\dotnet.exe"
+
+          # Properly quoted binPath
+          $binPath = "`"$dotnetExe`" `"$dllPath`" --urls http://0.0.0.0:5000"
           Write-Host "Creating Windows Service for BuildWebApp..."
           sc.exe create BuildWebAppService binPath= "$binPath" start= auto
 
@@ -88,6 +92,7 @@ jobs:
           sc.exe start BuildWebAppService
 
           Write-Host "Deployment complete. App is running as a Windows Service on http://localhost:5000"
+
 
 
 
