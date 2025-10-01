@@ -62,26 +62,32 @@ jobs:
           path: app.zip
 
       - id: deploy
-        name: Deploy & Run Locally (Self-Host)
+        name: Deploy & Run as Windows Service (Self-Host)
         run: |
-          # Stop any running instance
-          Write-Host "Stopping any running BuildWebApp process..."
-          Get-Process BuildWebApp -ErrorAction SilentlyContinue | Stop-Process -Force
-      
           # Deployment folder
           $deployDir = "$env:USERPROFILE\BuildWebApp_deploy"
           if (!(Test-Path $deployDir)) { New-Item -ItemType Directory -Path $deployDir }
-      
+
           # Copy published files
           Write-Host "Copying published files to $deployDir..."
           Copy-Item -Path ".\published\*" -Destination $deployDir -Recurse -Force
-      
-          # Run the app in background
+
+          # Stop and delete existing service if exists
+          sc.exe stop BuildWebAppService || echo "Service not running"
+          sc.exe delete BuildWebAppService || echo "Service not found"
+
+          # Create service pointing to the published DLL
           $dllPath = Join-Path $deployDir "BuildWebApp.dll"
-          Write-Host "Starting BuildWebApp locally (background)..."
-          Start-Process "dotnet" -ArgumentList "`"$dllPath`" --urls http://0.0.0.0:5000" -WindowStyle Hidden
+          $binPath = "dotnet `"$dllPath`" --urls http://0.0.0.0:5000"
+          Write-Host "Creating Windows Service for BuildWebApp..."
+          sc.exe create BuildWebAppService binPath= "$binPath" start= auto
+
+          # Start the service
+          sc.exe start BuildWebAppService
       
-          Write-Host "Deployment complete. App should be running at http://localhost:5000"
+          Write-Host "Deployment complete. App is running as a Windows Service on http://localhost:5000"
+        shell: pwsh
+
 
 
 
