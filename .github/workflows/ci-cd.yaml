@@ -62,31 +62,92 @@ jobs:
           path: app.zip
 
       - id: deploy
-        name: Deploy using nssm (Recommended)
+        name: Deploy using nssm (Fixed Download)
         run: |
           $serviceName = "BuildWebApp"
           $deployDir = "$env:USERPROFILE\BuildWebApp_deploy"
           
-          # Download nssm
+          # Download nssm with proper error handling
           $nssmDir = "$env:TEMP\nssm"
-          $nssmExe = "$nssmDir\win64\nssm.exe"
+          $nssmExe = "$nssmDir\nssm.exe"
           
           if (!(Test-Path $nssmExe)) {
               Write-Host "Downloading nssm..."
+              
+              # Create temp directory
+              if (Test-Path $nssmDir) {
+                  Remove-Item $nssmDir -Recurse -Force -ErrorAction SilentlyContinue
+              }
+              New-Item -ItemType Directory -Path $nssmDir -Force
+              
+              # Download nssm from reliable source
+              $nssmUrl = "https://nssm.cc/release/nssm-2.24.zip"
               $nssmZip = "$env:TEMP\nssm.zip"
-              Invoke-WebRequest "https://nssm.cc/ci/nssm-2.24-101-g897c7ad.zip" -OutFile $nssmZip
-              Expand-Archive -Path $nssmZip -DestinationPath $nssmDir -Force
+              
+              try {
+                  # Download with progress
+                  Invoke-WebRequest -Uri $nssmUrl -OutFile $nssmZip -UserAgent "PowerShell"
+                  Write-Host "Download completed successfully"
+                  
+                  # Extract nssm
+                  Expand-Archive -Path $nssmZip -DestinationPath $nssmDir -Force
+                  Write-Host "Extraction completed"
+                  
+                  # Find nssm.exe in the extracted files
+                  $nssmExe = Get-ChildItem -Path $nssmDir -Recurse -Filter "nssm.exe" | Select-Object -First 1 -ExpandProperty FullName
+                  
+                  if (!$nssmExe) {
+                      Write-Host "Looking for nssm.exe in extracted files..."
+                      Get-ChildItem -Path $nssmDir -Recurse | Format-Table Name, FullName
+                      throw "nssm.exe not found in downloaded archive"
+                  }
+                  
+                  Write-Host "Found nssm.exe at: $nssmExe"
+                  
+              } catch {
+                  Write-Host "Failed to download nssm: $($_.Exception.Message)"
+                  Write-Host "Trying alternative download method..."
+                  
+                  # Alternative download method
+                  try {
+                      $webClient = New-Object System.Net.WebClient
+                      $webClient.DownloadFile($nssmUrl, $nssmZip)
+                      Expand-Archive -Path $nssmZip -DestinationPath $nssmDir -Force
+                      $nssmExe = Get-ChildItem -Path $nssmDir -Recurse -Filter "nssm.exe" | Select-Object -First 1 -ExpandProperty FullName
+                  } catch {
+                      Write-Host "Alternative download also failed: $($_.Exception.Message)"
+                      # Fallback to direct executable download
+                      $nssmExe = "$nssmDir\nssm.exe"
+                      $directUrl = "https://nssm.cc/ci/nssm-2.24-101-g897c7ad.zip"
+                      Invoke-WebRequest -Uri $directUrl -OutFile $nssmZip
+                      Expand-Archive -Path $nssmZip -DestinationPath $nssmDir -Force
+                      $nssmExe = Get-ChildItem -Path $nssmDir -Recurse -Filter "nssm.exe" | Select-Object -First 1 -ExpandProperty FullName
+                  }
+              }
           }
           
-          # Clean and deploy
+          # Verify nssm.exe exists
+          if (!(Test-Path $nssmExe)) {
+              Write-Host "nssm.exe still not found. Available files:"
+              Get-ChildItem -Path $nssmDir -Recurse -ErrorAction SilentlyContinue | Format-Table Name, FullName
+              throw "nssm.exe could not be downloaded or found"
+          }
+          
+          Write-Host "Using nssm from: $nssmExe"
+          
+          # Clean and deploy application
           if (Test-Path $deployDir) { 
+              Write-Host "Cleaning deployment directory..."
               Remove-Item "$deployDir\*" -Recurse -Force -ErrorAction SilentlyContinue 
           } else { 
               New-Item -ItemType Directory -Path $deployDir -Force 
           }
+          
+          Write-Host "Copying published files..."
           Copy-Item -Path ".\published\*" -Destination $deployDir -Recurse -Force
           
           # Stop and remove existing service
+          Write-Host "Stopping and removing existing service..."
           & $nssmExe stop $serviceName -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 3
           & $nssmExe remove $serviceName confirm -ErrorAction SilentlyContinue
@@ -95,10 +156,22 @@ jobs:
           # Install with nssm - using the EXE file directly
           $exePath = Join-Path $deployDir "BuildWebApp.exe"
           
+          if (!(Test-Path $exePath)) {
+              Write-Host "ERROR: BuildWebApp.exe not found at $exePath"
+              Write-Host "Available files in deployment directory:"
+              Get-ChildItem $deployDir | Format-Table Name, Length
+              throw "Application executable not found"
+          }
+          
           Write-Host "Installing service with nssm..."
           & $nssmExe install $serviceName $exePath "--urls http://0.0.0.0:5000"
           
+          if ($LASTEXITCODE -ne 0) {
+              throw "Failed to install service with nssm. Exit code: $LASTEXITCODE"
+          }
+          
           # Configure nssm service settings
+          Write-Host "Configuring service settings..."
           & $nssmExe set $serviceName DisplayName "Build Web App"
           & $nssmExe set $serviceName Description "Build Web Application Service"
           & $nssmExe set $serviceName Start SERVICE_AUTO_START
@@ -118,6 +191,10 @@ jobs:
           Write-Host "Starting service..."
           & $nssmExe start $serviceName
           
+          if ($LASTEXITCODE -ne 0) {
+              Write-Host "WARNING: Service start returned exit code: $LASTEXITCODE"
+          }
+          
           # Wait and check status
           Start-Sleep -Seconds 5
           $service = Get-Service $serviceName -ErrorAction SilentlyContinue
@@ -128,8 +205,8 @@ jobs:
               # Test the application
               Start-Sleep -Seconds 3
               try {
-                  $response = Invoke-WebRequest -Uri "http://localhost:5000" -TimeoutSec 10 -ErrorAction SilentlyContinue
-                  Write-Host "Service is responding on port 5000. Status: $($response.StatusCode)"
+                  $response = Invoke-RestMethod -Uri "http://localhost:5000" -TimeoutSec 10 -ErrorAction SilentlyContinue
+                  Write-Host "Service is responding on port 5000"
               } catch {
                   Write-Host "Service might be starting... check logs in: $deployDir\service.log"
               }
@@ -140,7 +217,8 @@ jobs:
                   Get-Content "$deployDir\service.log" -Tail 10 -ErrorAction SilentlyContinue
               }
           } else {
-              Write-Host "Service failed to start. Checking logs..."
+              Write-Host "Service status: $($service.Status)"
+              Write-Host "Checking service logs..."
               
               if (Test-Path "$deployDir\service_error.log") {
                   Write-Host "=== Service Error Logs ==="
@@ -151,9 +229,6 @@ jobs:
                   Write-Host "=== Service Logs ==="
                   Get-Content "$deployDir\service.log" -ErrorAction SilentlyContinue
               }
-              
-              # Check event logs
-              Get-EventLog -LogName Application -Newest 10 | 
-                  Where-Object { $_.Source -eq ".NET Runtime" } |
-                  Format-Table TimeGenerated, EntryType, Message -Wrap -AutoSize
           }
+          
+          Write-Host "Deployment process completed."
