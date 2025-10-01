@@ -62,44 +62,23 @@ jobs:
           path: app.zip
 
       - id: deploy
-        name: Deploy & Run as Windows Service (Self-Host)
-        shell: powershell
+        name: Deploy & Run Locally (Self-Host)
         run: |
+          # Stop any running instance
+          Write-Host "Stopping any running BuildWebApp process..."
+          Get-Process BuildWebApp -ErrorAction SilentlyContinue | Stop-Process -Force
+      
           # Deployment folder
           $deployDir = "$env:USERPROFILE\BuildWebApp_deploy"
           if (!(Test-Path $deployDir)) { New-Item -ItemType Directory -Path $deployDir }
-          
+      
           # Copy published files
           Write-Host "Copying published files to $deployDir..."
           Copy-Item -Path ".\published\*" -Destination $deployDir -Recurse -Force
-          
-          # Stop and delete existing service if it exists
-          Write-Host "Stopping and deleting existing service if present..."
-          sc.exe stop BuildWebAppService 2>$null
-          sc.exe delete BuildWebAppService 2>$null
-          
-          # Paths
+      
+          # Run the app in background
           $dllPath = Join-Path $deployDir "BuildWebApp.dll"
-          $dotnetExe = "C:\Program Files\dotnet\dotnet.exe"
-          
-          # Properly escape the quotes for SC
-          $binPath = "`"$dotnetExe`" `"$dllPath`" --urls http://0.0.0.0:5000"
-          
-          # Wrap the entire binPath value in quotes for SC
-          $binPathQuoted = '"' + $binPath + '"'
-          
-          Write-Host "Creating Windows Service for BuildWebApp..."
-          # Space after binPath= is required
-          sc.exe create BuildWebAppService binPath= $binPathQuoted start= auto
-          
-          # Check if the service was created before starting
-          $svc = Get-Service -Name BuildWebAppService -ErrorAction SilentlyContinue
-          if ($svc) {
-              Write-Host "Starting Windows Service..."
-              sc.exe start BuildWebAppService
-          } else {
-              Write-Host "Service creation failed. Check the binPath syntax and permissions."
-          }
-          
-          Write-Host "Deployment step finished."
-         
+          Write-Host "Starting BuildWebApp locally (background)..."
+          Start-Process "dotnet" -ArgumentList "`"$dllPath`" --urls http://0.0.0.0:5000" -WindowStyle Hidden
+      
+          Write-Host "Deployment complete. App should be running at http://localhost:5000"
